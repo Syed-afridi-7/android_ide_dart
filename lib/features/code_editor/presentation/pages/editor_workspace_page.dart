@@ -1,13 +1,23 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:re_editor/re_editor.dart';
-import 'package:xterm/xterm.dart';
-import 'package:go_router/go_router.dart';
+import 'package:re_highlight/languages/python.dart';
+import 'package:re_highlight/languages/javascript.dart';
+import 'package:re_highlight/languages/java.dart';
+import 'package:re_highlight/languages/cpp.dart';
+import 'package:re_highlight/languages/xml.dart';
+import 'package:re_highlight/languages/dart.dart';
+import 'package:re_highlight/languages/bash.dart';
+import 'package:re_highlight/styles/atom-one-dark.dart';
 
 import 'package:android_ide/features/project_explorer/presentation/state/project_explorer_cubit.dart';
-import 'package:android_ide/features/project_explorer/domain/entities/file_node.dart';
+import 'package:android_ide/features/project_explorer/presentation/widgets/workspace_drawer.dart';
 import 'package:android_ide/features/code_editor/presentation/state/workspace_cubit.dart';
+import 'package:android_ide/features/code_editor/presentation/widgets/editor_top_action_bar.dart';
+import 'package:android_ide/features/code_editor/presentation/widgets/editor_tab_bar.dart';
+import 'package:android_ide/features/code_editor/presentation/widgets/keyboard_symbol_bar.dart';
+import 'package:android_ide/features/terminal/application/terminal_cubit.dart';
+import 'package:android_ide/features/terminal/presentation/widgets/terminal_dock.dart';
 
 class EditorWorkspacePage extends StatefulWidget {
   const EditorWorkspacePage({super.key});
@@ -16,344 +26,189 @@ class EditorWorkspacePage extends StatefulWidget {
   State<EditorWorkspacePage> createState() => _EditorWorkspacePageState();
 }
 
-class _EditorWorkspacePageState extends State<EditorWorkspacePage> {
-  final Terminal _terminal = Terminal(maxLines: 1000);
+class _EditorWorkspacePageState extends State<EditorWorkspacePage> with WidgetsBindingObserver {
   final CodeLineEditingController _editorController = CodeLineEditingController();
-  bool _isSidebarOpen = true;
-  bool _isTerminalOpen = false;
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   String? _currentlyEditingPath;
 
   @override
   void initState() {
     super.initState();
-    _terminal.write('Welcome to Android IDE shell.\r\n\$ ');
+    WidgetsBinding.instance.addObserver(this);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _editorController.dispose();
     super.dispose();
   }
 
-  // Reads file contents from disk and opens a tab in the workspace
-  void _onFileSelected(BuildContext context, String path, String name) async {
-    try {
-      final file = File(path);
-      if (await file.exists()) {
-        final content = await file.readAsString();
-        if (context.mounted) {
-          context.read<WorkspaceCubit>().openFile(path, name, content);
-        }
-      }
-    } catch (e) {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      context.read<WorkspaceCubit>().persistSessionOnPause();
+    }
+  }
+
+  void _onSaveFile(BuildContext context) async {
+    final workspaceCubit = context.read<WorkspaceCubit>();
+    final activeTab = workspaceCubit.state.activeTab;
+    if (activeTab != null) {
+      final success = await workspaceCubit.saveActiveTab(_editorController.text);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to read file: $e')),
+          SnackBar(
+            content: Text(
+              success ? 'Saved: ${activeTab.fileName}' : 'Failed to save file.',
+            ),
+            duration: const Duration(seconds: 2),
+          ),
         );
       }
     }
   }
 
-  void _onNodeTapped(BuildContext context, FileNode node) {
-    if (node.isDirectory) {
-      context.read<ProjectExplorerCubit>().toggleDirectoryExpansion(node.path);
-    } else {
-      _onFileSelected(context, node.path, node.name);
-    }
+  void _insertSymbol(String symbol) {
+    final text = _editorController.text;
+    final newText = text + symbol;
+    _editorController.text = newText;
+    context.read<WorkspaceCubit>().updateActiveContent(newText);
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    
-    return BlocListener<WorkspaceCubit, WorkspaceState>(
-      listener: (context, state) {
-        final activeTab = state.activeTab;
-        if (activeTab != null && activeTab.filePath != _currentlyEditingPath) {
-          setState(() {
-            _currentlyEditingPath = activeTab.filePath;
-            // Temporarily replace text content in the editor
-            _editorController.text = activeTab.content;
-          });
-        }
-      },
+
+    return MultiBlocListener(
+      listeners: [
+        BlocListener<ProjectExplorerCubit, ProjectExplorerState>(
+          listener: (context, explorerState) {
+            final openReq = explorerState.pendingOpenRequest;
+            if (openReq != null) {
+              context.read<WorkspaceCubit>().openFile(openReq.path, openReq.name);
+            }
+          },
+        ),
+        BlocListener<WorkspaceCubit, WorkspaceState>(
+          listener: (context, state) {
+            final activeTab = state.activeTab;
+            if (activeTab != null) {
+              if (activeTab.filePath != _currentlyEditingPath) {
+                setState(() {
+                  _currentlyEditingPath = activeTab.filePath;
+                  _editorController.text = activeTab.content;
+                });
+              }
+            } else {
+              if (_currentlyEditingPath != null) {
+                setState(() {
+                  _currentlyEditingPath = null;
+                  _editorController.text = '';
+                });
+              }
+            }
+          },
+        ),
+        BlocListener<TerminalCubit, TerminalDockState>(
+          listenWhen: (previous, current) => !previous.isOpen && current.isOpen,
+          listener: (context, terminalState) {
+            showTerminalModalBottomSheet(context);
+          },
+        ),
+      ],
       child: Scaffold(
-        appBar: AppBar(
-          title: BlocBuilder<ProjectExplorerCubit, ProjectExplorerState>(
-            builder: (context, state) {
-              return Text(state.activeProject?.name ?? 'Android IDE Workspace');
-            },
+        key: _scaffoldKey,
+        appBar: EditorTopActionBar(
+          onToggleSidebar: () {
+            WorkspaceDrawer.showModalBottomSheet(context);
+          },
+          onSaveFile: () => _onSaveFile(context),
+        ),
+        drawer: Drawer(
+          child: WorkspaceDrawer(
+            isModal: true,
+            onClose: () => Navigator.pop(context),
           ),
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: () => context.go('/'),
-          ),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.save_outlined),
-              tooltip: 'Save Current File',
-              onPressed: () async {
-                final workspaceCubit = context.read<WorkspaceCubit>();
-                final activeTab = workspaceCubit.state.activeTab;
-                if (activeTab != null) {
-                  try {
-                    final file = File(activeTab.filePath);
-                    final newContent = _editorController.text;
-                    await file.writeAsString(newContent);
-                    workspaceCubit.saveActiveTab(newContent);
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Saved: ${activeTab.fileName}')),
-                      );
-                    }
-                  } catch (e) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Failed to save file: $e')),
-                      );
-                    }
-                  }
-                }
-              },
-            ),
-            IconButton(
-              icon: Icon(_isSidebarOpen ? Icons.view_sidebar : Icons.view_sidebar_outlined),
-              tooltip: 'Toggle File Tree',
-              onPressed: () => setState(() => _isSidebarOpen = !_isSidebarOpen),
-            ),
-            IconButton(
-              icon: Icon(_isTerminalOpen ? Icons.terminal : Icons.terminal_outlined),
-              tooltip: 'Toggle Terminal',
-              onPressed: () => setState(() => _isTerminalOpen = !_isTerminalOpen),
-            ),
-          ],
         ),
         body: Column(
           children: [
-            // Editor Workspace Split Panel
-            Expanded(
-              child: Row(
-                children: [
-                  // Sidebar Project File Tree
-                  if (_isSidebarOpen)
-                    Container(
-                      width: 250,
-                      decoration: BoxDecoration(
-                        border: Border(
-                          right: BorderSide(color: theme.dividerColor),
-                        ),
-                        color: theme.colorScheme.surface,
-                      ),
-                      child: BlocBuilder<ProjectExplorerCubit, ProjectExplorerState>(
-                        builder: (context, state) {
-                          if (state.isLoading) {
-                            return const Center(child: CircularProgressIndicator());
-                          }
-                          if (state.fileTree.isEmpty) {
-                            return const Center(
-                              child: Padding(
-                                padding: EdgeInsets.all(16.0),
-                                child: Text('Workspace empty.'),
-                              ),
-                            );
-                          }
-                          return Scrollbar(
-                            child: ListView(
-                              children: [
-                                FileTreeView(
-                                  nodes: state.fileTree,
-                                  onNodeTap: (node) => _onNodeTapped(context, node),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  
-                  // Primary Editor canvas
-                  Expanded(
-                    child: BlocBuilder<WorkspaceCubit, WorkspaceState>(
-                      builder: (context, state) {
-                        final activeTab = state.activeTab;
-                        if (activeTab == null) {
-                          return const Center(
-                            child: Text('Select a file to edit code.'),
-                          );
-                        }
+            // 1. Horizontal Multi-Tab Strip
+            const EditorTabBar(),
 
-                        return Column(
-                          children: [
-                            // Tab Bar layout
-                            Container(
-                              height: 40,
-                              color: theme.colorScheme.surface,
-                              child: ListView.builder(
-                                scrollDirection: Axis.horizontal,
-                                itemCount: state.tabs.length,
-                                itemBuilder: (context, idx) {
-                                  final tab = state.tabs[idx];
-                                  final isActive = idx == state.activeIndex;
-                                  return GestureDetector(
-                                    onTap: () => context.read<WorkspaceCubit>().selectTab(idx),
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                                      decoration: BoxDecoration(
-                                        color: isActive
-                                            ? theme.colorScheme.surface
-                                            : Colors.transparent,
-                                        border: Border(
-                                          right: BorderSide(color: theme.dividerColor),
-                                        ),
-                                      ),
-                                      child: Row(
-                                        children: [
-                                          Text(
-                                            tab.fileName,
-                                            style: TextStyle(
-                                              fontWeight:
-                                                  isActive ? FontWeight.bold : FontWeight.normal,
-                                            ),
-                                          ),
-                                          if (tab.isDirty)
-                                            const Padding(
-                                              padding: EdgeInsets.only(left: 4.0),
-                                              child: Icon(Icons.circle, size: 8, color: Colors.blue),
-                                            ),
-                                          const SizedBox(width: 8),
-                                          GestureDetector(
-                                            onTap: () => context.read<WorkspaceCubit>().closeTab(idx),
-                                            child: const Icon(Icons.close, size: 14),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                            
-                            // Editor Canvas widget
-                            Expanded(
-                              child: CodeEditor(
-                                controller: _editorController,
-                                onChanged: (value) {
-                                  context.read<WorkspaceCubit>().updateActiveContent(_editorController.text);
-                                },
-                                style: CodeEditorStyle(
-                                  fontSize: 14.0,
-                                  codeTheme: CodeHighlightTheme(
-                                    languages: const {},
-                                    theme: const {},
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            
-            // Bottom Terminal view
-            if (_isTerminalOpen)
-              Container(
-                height: 200,
-                decoration: BoxDecoration(
-                  border: Border(
-                    top: BorderSide(color: theme.dividerColor),
-                  ),
-                  color: Colors.black,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Container(
-                      color: Colors.grey[900],
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            // 2. 100% Full-Screen Code Canvas
+            Expanded(
+              child: BlocBuilder<WorkspaceCubit, WorkspaceState>(
+                builder: (context, state) {
+                  final activeTab = state.activeTab;
+                  if (activeTab == null) {
+                    return Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Text('Terminal Output', style: TextStyle(color: Colors.white, fontSize: 12)),
-                          IconButton(
-                            icon: const Icon(Icons.close, color: Colors.white, size: 14),
-                            onPressed: () => setState(() => _isTerminalOpen = false),
+                          Icon(
+                            Icons.code,
+                            size: 64,
+                            color: theme.colorScheme.primary.withValues(alpha: 0.4),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No File Opened',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          ElevatedButton.icon(
+                            icon: const Icon(Icons.folder_open),
+                            label: const Text('Open Explorer'),
+                            onPressed: () {
+                              WorkspaceDrawer.showModalBottomSheet(context);
+                            },
                           ),
                         ],
                       ),
-                    ),
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: TerminalView(_terminal),
+                    );
+                  }
+
+                  return CodeEditor(
+                    controller: _editorController,
+                    onChanged: (value) {
+                      context
+                          .read<WorkspaceCubit>()
+                          .updateActiveContent(_editorController.text);
+                    },
+                    style: CodeEditorStyle(
+                      fontSize: 14.0,
+                      codeTheme: CodeHighlightTheme(
+                        languages: {
+                          'python': CodeHighlightThemeMode(mode: langPython),
+                          'js': CodeHighlightThemeMode(mode: langJavascript),
+                          'java': CodeHighlightThemeMode(mode: langJava),
+                          'cpp': CodeHighlightThemeMode(mode: langCpp),
+                          'c': CodeHighlightThemeMode(mode: langCpp),
+                          'html': CodeHighlightThemeMode(mode: langXml),
+                          'dart': CodeHighlightThemeMode(mode: langDart),
+                          'sh': CodeHighlightThemeMode(mode: langBash),
+                        },
+                        theme: atomOneDarkTheme,
                       ),
                     ),
-                  ],
-                ),
+                  );
+                },
               ),
+            ),
+
+            // 3. Touch-First Keyboard Symbol Accessory Bar (Below code canvas)
+            KeyboardSymbolBar(
+              onSymbolTap: _insertSymbol,
+              onTabTap: () => _insertSymbol('  '),
+            ),
           ],
         ),
       ),
-    );
-  }
-}
-
-class FileTreeView extends StatelessWidget {
-  final List<FileNode> nodes;
-  final Function(FileNode) onNodeTap;
-
-  const FileTreeView({
-    super.key,
-    required this.nodes,
-    required this.onNodeTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: nodes.length,
-      itemBuilder: (context, index) {
-        final node = nodes[index];
-        return _buildNodeItem(context, node);
-      },
-    );
-  }
-
-  Widget _buildNodeItem(BuildContext context, FileNode node) {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ListTile(
-          dense: true,
-          contentPadding: EdgeInsets.only(left: node.isDirectory ? 8.0 : 24.0),
-          leading: Icon(
-            node.isDirectory
-                ? (node.isExpanded ? Icons.folder_open_outlined : Icons.folder_outlined)
-                : Icons.insert_drive_file_outlined,
-            size: 18,
-            color: node.isDirectory ? Colors.amber[700] : theme.colorScheme.primary,
-          ),
-          title: Text(
-            node.name,
-            style: const TextStyle(fontSize: 13),
-          ),
-          onTap: () => onNodeTap(node),
-        ),
-        if (node.isDirectory && node.isExpanded && node.children.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(left: 12.0),
-            child: FileTreeView(
-              nodes: node.children,
-              onNodeTap: onNodeTap,
-            ),
-          ),
-      ],
     );
   }
 }

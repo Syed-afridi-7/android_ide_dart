@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:go_router/go_router.dart';
+import 'package:path/path.dart' as p;
 import '../state/project_explorer_cubit.dart';
 
 class ProjectExplorerPage extends StatelessWidget {
@@ -11,7 +12,7 @@ class ProjectExplorerPage extends StatelessWidget {
     try {
       final String? directoryPath = await FilePicker.platform.getDirectoryPath();
       if (directoryPath != null && context.mounted) {
-        final name = directoryPath.split('/').last;
+        final name = p.basename(directoryPath);
         context.read<ProjectExplorerCubit>().openProject(name, directoryPath);
         context.go('/editor');
       }
@@ -69,7 +70,7 @@ class ProjectExplorerPage extends StatelessWidget {
                       'Desktop-grade development environment on the go.',
                       textAlign: TextAlign.center,
                       style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurface.withAlpha(178),
+                        color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
                       ),
                     ),
                     const SizedBox(height: 48),
@@ -95,7 +96,6 @@ class ProjectExplorerPage extends StatelessWidget {
                     const SizedBox(height: 16),
                     OutlinedButton.icon(
                       onPressed: () {
-                        // TODO: Implement custom wizard modal
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(content: Text('Wizard is coming soon!')),
                         );

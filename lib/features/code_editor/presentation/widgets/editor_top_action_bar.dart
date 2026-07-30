@@ -8,6 +8,7 @@ import 'package:android_ide/features/terminal/application/terminal_cubit.dart';
 import 'package:android_ide/features/runner_engine/widgets/live_preview_modal.dart';
 import 'package:android_ide/features/command_palette/presentation/widgets/command_palette_modal.dart';
 import 'package:android_ide/core/utils/language_detector.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class EditorTopActionBar extends StatelessWidget implements PreferredSizeWidget {
   final VoidCallback? onToggleSidebar;
@@ -132,6 +133,34 @@ class EditorTopActionBar extends StatelessWidget implements PreferredSizeWidget 
                     ],
                   ],
                 ),
+                onLongPress: activeTab == null
+                    ? null
+                    : () async {
+                        if (activeTab.isDirty) {
+                          onSaveFile();
+                        }
+                        
+                        final runnerCubit = context.read<RunnerCubit>();
+                        final projectState = context.read<ProjectExplorerCubit>().state;
+                        final workspacePath = projectState.activeProject?.rootPath ?? '';
+                        
+                        await runnerCubit.triggerRun(
+                          workspacePath: workspacePath,
+                          filePath: activeTab.filePath,
+                          content: activeTab.content,
+                        );
+
+                        final runnerState = runnerCubit.state;
+                        
+                        if (runnerState.status == RunnerStatus.webPreview && runnerState.webHtmlContent != null) {
+                          final uri = Uri.parse(runnerState.webHtmlContent!);
+                          try {
+                            await launchUrl(uri, mode: LaunchMode.externalApplication);
+                          } catch (e) {
+                            await launchUrl(uri);
+                          }
+                        }
+                      },
                 onPressed: activeTab == null
                     ? null
                     : () async {
@@ -158,7 +187,8 @@ class EditorTopActionBar extends StatelessWidget implements PreferredSizeWidget 
                             LivePreviewModal.show(
                               context,
                               activeTab.filePath,
-                              runnerState.webHtmlContent ?? activeTab.content,
+                              activeTab.content,
+                              localUrl: runnerState.webHtmlContent,
                             );
                           }
                         } else if (runnerState.status == RunnerStatus.missingToolchain) {

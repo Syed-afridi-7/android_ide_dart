@@ -260,7 +260,9 @@ class WorkspaceDrawer extends StatelessWidget {
               final name = controller.text.trim();
               if (name.isNotEmpty) {
                 Navigator.pop(dialogCtx);
-                await context.read<ProjectExplorerCubit>().createDirectory(parentDirPath, name);
+                final cubit = context.read<ProjectExplorerCubit>();
+                await cubit.createDirectory(parentDirPath, name);
+                cubit.refreshActiveNode();
               }
             },
             child: const Text('Create'),

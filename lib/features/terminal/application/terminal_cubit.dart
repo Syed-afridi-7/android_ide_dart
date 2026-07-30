@@ -31,7 +31,17 @@ class TerminalCubit extends Cubit<TerminalDockState> {
   })  : _cloudService = cloudService,
         _localService = localService,
         _sshService = sshService,
-        super(const TerminalDockState());
+        super(const TerminalDockState()) {
+    cloudTerminal.onOutput = (data) {
+      _cloudService.writeString(data);
+    };
+    localTerminal.onOutput = (data) {
+      _localService.writeString(data);
+    };
+    sshTerminal.onOutput = (data) {
+      _sshService.writeString(data);
+    };
+  }
 
   /// The currently active terminal buffer for the UI to render.
   Terminal get activeTerminal {
@@ -100,11 +110,6 @@ class TerminalCubit extends Cubit<TerminalDockState> {
         _sshStarted = true;
       }
 
-      // Bind I/O
-      sshTerminal.onOutput = (data) {
-        _sshService.writeString(data);
-      };
-
       _outputSubscription = _sshService.outputStream.listen(
         (data) {
           sshTerminal.write(String.fromCharCodes(data));
@@ -164,10 +169,6 @@ class TerminalCubit extends Cubit<TerminalDockState> {
       } else {
         _localStarted = true;
       }
-
-      terminal.onOutput = (data) {
-        service.writeString(data);
-      };
 
       _outputSubscription?.cancel();
       _outputSubscription = service.outputStream.listen(
@@ -231,7 +232,7 @@ class TerminalCubit extends Cubit<TerminalDockState> {
 
   void executeCommand(String command) {
     if (command.trim().isEmpty) return;
-    if (state.activeMode != TerminalMode.ssh) _ensureShellStarted();
+    _ensureShellStarted();
     emit(state.copyWith(currentCommand: command));
     _activeService.writeString('$command\n');
   }

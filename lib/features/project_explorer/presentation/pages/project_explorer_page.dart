@@ -3,10 +3,69 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import '../state/project_explorer_cubit.dart';
 
 class ProjectExplorerPage extends StatelessWidget {
   const ProjectExplorerPage({super.key});
+
+  Future<void> _showCreateDirectoryDialog(BuildContext context) async {
+    final controller = TextEditingController();
+    await showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Create New Directory'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'my_project',
+            labelText: 'Directory / Project Name',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final dirName = controller.text.trim();
+              if (dirName.isNotEmpty) {
+                Navigator.pop(dialogCtx);
+                try {
+                  final docsDir = await getApplicationDocumentsDirectory();
+                  final parentPath = docsDir.path;
+                  final fullPath = p.join(parentPath, dirName);
+                  
+                  if (context.mounted) {
+                    final cubit = context.read<ProjectExplorerCubit>();
+                    await cubit.createDirectory(parentPath, dirName);
+                    
+                    if (context.mounted) {
+                      cubit.openProject(dirName, fullPath);
+                      
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Created directory: $dirName')),
+                      );
+                      context.go('/editor');
+                    }
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Error creating directory: $e')),
+                    );
+                  }
+                }
+              }
+            },
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+  }
 
   Future<void> _selectWorkspace(BuildContext context) async {
     try {
@@ -95,11 +154,7 @@ class ProjectExplorerPage extends StatelessWidget {
                     ),
                     const SizedBox(height: 16),
                     OutlinedButton.icon(
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Wizard is coming soon!')),
-                        );
-                      },
+                      onPressed: () => _showCreateDirectoryDialog(context),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(

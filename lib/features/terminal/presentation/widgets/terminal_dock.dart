@@ -300,7 +300,10 @@ class _TerminalDockModalState extends State<TerminalDockModal> {
                   children: [
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
-                      child: TerminalView(cubit.activeTerminal),
+                      child: TerminalView(
+                        cubit.activeTerminal,
+                        autofocus: true,
+                      ),
                     ),
                     if (state.sessionStatus == TerminalSessionStatus.starting)
                       Container(

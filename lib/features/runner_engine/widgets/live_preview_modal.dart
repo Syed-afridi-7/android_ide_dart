@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class LivePreviewModal extends StatefulWidget {
   final String filePath;
@@ -92,6 +93,16 @@ class _LivePreviewModalState extends State<LivePreviewModal> {
     });
   }
 
+  Future<void> _openInExternalBrowser(String url) async {
+    final uri = Uri.parse(url);
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      // Fallback to default launch
+      await launchUrl(uri);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -160,6 +171,12 @@ class _LivePreviewModalState extends State<LivePreviewModal> {
                   tooltip: 'Reload',
                   onPressed: _reload,
                 ),
+                if (widget.localUrl != null && widget.localUrl!.isNotEmpty)
+                  IconButton(
+                    icon: const Icon(Icons.open_in_browser_rounded, size: 18),
+                    tooltip: 'Open in System Browser',
+                    onPressed: () => _openInExternalBrowser(widget.localUrl!),
+                  ),
                 IconButton(
                   icon: const Icon(Icons.close, size: 18),
                   onPressed: () => Navigator.pop(context),

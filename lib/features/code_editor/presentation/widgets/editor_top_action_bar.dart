@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:android_ide/features/code_editor/presentation/state/workspace_cubit.dart';
 import 'package:android_ide/features/project_explorer/presentation/widgets/workspace_drawer.dart';
+import 'package:android_ide/features/project_explorer/presentation/state/project_explorer_cubit.dart';
 import 'package:android_ide/features/runner_engine/presentation/state/runner_cubit.dart';
 import 'package:android_ide/features/terminal/application/terminal_cubit.dart';
 import 'package:android_ide/features/runner_engine/widgets/live_preview_modal.dart';
@@ -141,7 +142,11 @@ class EditorTopActionBar extends StatelessWidget implements PreferredSizeWidget 
 
                         // 2. Trigger RunnerCubit toolchain verification & run preparation
                         final runnerCubit = context.read<RunnerCubit>();
+                        final projectState = context.read<ProjectExplorerCubit>().state;
+                        final workspacePath = projectState.activeProject?.rootPath ?? '';
+                        
                         await runnerCubit.triggerRun(
+                          workspacePath: workspacePath,
                           filePath: activeTab.filePath,
                           content: activeTab.content,
                         );
@@ -153,7 +158,7 @@ class EditorTopActionBar extends StatelessWidget implements PreferredSizeWidget 
                             LivePreviewModal.show(
                               context,
                               activeTab.filePath,
-                              activeTab.content,
+                              runnerState.webHtmlContent ?? activeTab.content,
                             );
                           }
                         } else if (runnerState.status == RunnerStatus.missingToolchain) {
@@ -168,6 +173,11 @@ class EditorTopActionBar extends StatelessWidget implements PreferredSizeWidget 
                         } else if (runnerState.executionCommand != null) {
                           if (context.mounted) {
                             final terminalCubit = context.read<TerminalCubit>();
+                            if (langInfo?.type == LanguageType.javascript ||
+                                langInfo?.type == LanguageType.python ||
+                                langInfo?.type == LanguageType.shell) {
+                              terminalCubit.switchMode(TerminalMode.cloud);
+                            }
                             terminalCubit.openTerminal();
                             terminalCubit.executeCommand(runnerState.executionCommand!);
                           }

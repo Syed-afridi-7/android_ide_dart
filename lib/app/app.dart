@@ -27,7 +27,11 @@ class AppView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final fileSystemService = ref.read(fileSystemServiceProvider);
     final tabSessionService = ref.read(tabSessionServiceProvider);
-    final ptyAdapter = ref.read(ptyAdapterProvider);
+    final cloudTerminal = ref.read(cloudTerminalProvider);
+    final localTerminal = ref.read(localTerminalProvider);
+    final sshTerminal = ref.read(sshTerminalProvider);
+    final localWebServer = ref.read(localWebServerProvider);
+    final cloudSync = ref.read(cloudWorkspaceSyncProvider);
 
     return MultiBlocProvider(
       providers: [
@@ -38,10 +42,17 @@ class AppView extends ConsumerWidget {
           create: (context) => WorkspaceCubit(fileSystemService, tabSessionService)..restoreSessionOnLaunch(),
         ),
         BlocProvider<RunnerCubit>(
-          create: (context) => RunnerCubit(),
+          create: (context) => RunnerCubit(
+            localWebServer: localWebServer,
+            cloudSyncService: cloudSync,
+          ),
         ),
         BlocProvider<TerminalCubit>(
-          create: (context) => TerminalCubit(ptyAdapter),
+          create: (context) => TerminalCubit(
+            cloudService: cloudTerminal,
+            localService: localTerminal,
+            sshService: sshTerminal,
+          ),
         ),
       ],
       child: MaterialApp.router(

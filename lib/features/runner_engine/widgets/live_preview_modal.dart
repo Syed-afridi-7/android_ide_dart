@@ -1,22 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
+import 'package:webview_flutter/webview_flutter.dart';
 
 class LivePreviewModal extends StatefulWidget {
   final String filePath;
   final String htmlContent;
+  final String? localUrl;
 
   const LivePreviewModal({
     super.key,
     required this.filePath,
     required this.htmlContent,
+    this.localUrl,
   });
 
-  static void show(BuildContext context, String filePath, String htmlContent) {
+  static void show(BuildContext context, String filePath, String htmlContent, {String? localUrl}) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => LivePreviewModal(filePath: filePath, htmlContent: htmlContent),
+      builder: (ctx) => LivePreviewModal(filePath: filePath, htmlContent: htmlContent, localUrl: localUrl),
     );
   }
 
@@ -27,6 +30,60 @@ class LivePreviewModal extends StatefulWidget {
 class _LivePreviewModalState extends State<LivePreviewModal> {
   double _viewportWidth = double.infinity;
   String _deviceMode = 'Full Width';
+  WebViewController? _webViewController;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initWebViewController();
+  }
+
+  void _initWebViewController() {
+    try {
+      _webViewController = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setNavigationDelegate(
+          NavigationDelegate(
+            onPageStarted: (String url) {
+              if (mounted) {
+                setState(() { _isLoading = true; });
+              }
+            },
+            onPageFinished: (String url) {
+              if (mounted) {
+                setState(() { _isLoading = false; });
+              }
+            },
+            onWebResourceError: (WebResourceError error) {},
+          ),
+        );
+      
+      _loadContent();
+    } catch (e) {
+      // webview_flutter might not be supported on this platform, handle fallback gracefully
+      _webViewController = null;
+      _isLoading = false;
+    }
+  }
+
+  void _loadContent() {
+    if (_webViewController != null) {
+      if (widget.localUrl != null && widget.localUrl!.isNotEmpty) {
+        _webViewController!.loadRequest(Uri.parse(widget.localUrl!));
+      } else {
+        _webViewController!.loadHtmlString(widget.htmlContent.isEmpty ? '<html><body><h1>Empty HTML Document</h1></body></html>' : widget.htmlContent);
+      }
+    }
+  }
+
+  void _reload() {
+    if (_webViewController != null) {
+      _webViewController!.reload();
+    } else {
+      setState(() {}); // For fallback
+    }
+  }
 
   void _setViewport(double width, String mode) {
     setState(() {
@@ -39,6 +96,7 @@ class _LivePreviewModalState extends State<LivePreviewModal> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final fileName = p.basename(widget.filePath);
+    final displayUrl = widget.localUrl ?? 'Local HTML Content';
 
     return Container(
       height: MediaQuery.of(context).size.height * 0.85,
@@ -70,7 +128,7 @@ class _LivePreviewModalState extends State<LivePreviewModal> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       Text(
-                        'http://localhost:8080/$fileName ($_deviceMode)',
+                        '$displayUrl ($_deviceMode)',
                         style: TextStyle(fontSize: 10, color: theme.colorScheme.onSurfaceVariant),
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -78,7 +136,7 @@ class _LivePreviewModalState extends State<LivePreviewModal> {
                   ),
                 ),
 
-                // Responsive Viewport Selectors
+                // Responsive Viewport Selectors & Controls
                 IconButton(
                   icon: const Icon(Icons.smartphone, size: 18),
                   tooltip: 'Mobile Viewport (375px)',
@@ -100,7 +158,7 @@ class _LivePreviewModalState extends State<LivePreviewModal> {
                 IconButton(
                   icon: const Icon(Icons.refresh, size: 18),
                   tooltip: 'Reload',
-                  onPressed: () => setState(() {}),
+                  onPressed: _reload,
                 ),
                 IconButton(
                   icon: const Icon(Icons.close, size: 18),
@@ -128,18 +186,27 @@ class _LivePreviewModalState extends State<LivePreviewModal> {
                   ],
                 ),
                 child: ClipRect(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(16),
-                    child: SelectableText(
-                      widget.htmlContent.isEmpty
-                          ? '<html><body><h1>Empty HTML Document</h1></body></html>'
-                          : widget.htmlContent,
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        color: Colors.black87,
-                        fontSize: 13,
-                      ),
-                    ),
+                  child: Stack(
+                    children: [
+                      if (_webViewController != null)
+                        WebViewWidget(controller: _webViewController!)
+                      else
+                        SingleChildScrollView(
+                          padding: const EdgeInsets.all(16),
+                          child: SelectableText(
+                            widget.htmlContent.isEmpty
+                                ? '<html><body><h1>Empty HTML Document</h1></body></html>'
+                                : widget.htmlContent,
+                            style: const TextStyle(
+                              fontFamily: 'monospace',
+                              color: Colors.black87,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      if (_isLoading && _webViewController != null)
+                        const Center(child: CircularProgressIndicator()),
+                    ],
                   ),
                 ),
               ),

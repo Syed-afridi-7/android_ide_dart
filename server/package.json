@@ -1,0 +1,18 @@
+{
+  "name": "cloud-terminal-server",
+  "version": "1.1.0",
+  "description": "Cloud Terminal WebSocket server with SSH proxy support for Android IDE",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "node-pty": "^1.0.0",
+    "ssh2": "^1.16.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

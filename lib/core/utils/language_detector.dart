@@ -70,6 +70,9 @@ class LanguageDetector {
           color: Color(0xFF3572A5),
         );
       case 'js':
+      case 'ts':
+      case 'jsx':
+      case 'tsx':
         return const LanguageInfo(
           type: LanguageType.javascript,
           displayName: 'Node.js',
@@ -83,7 +86,7 @@ class LanguageDetector {
           type: LanguageType.c,
           displayName: 'C (GCC)',
           binaryName: 'gcc',
-          runnerCommandTemplate: 'gcc {file} -o /tmp/c_out && /tmp/c_out',
+          runnerCommandTemplate: 'gcc {file} -o out && ./out',
           icon: Icons.integration_instructions,
           color: Color(0xFF555555),
         );
@@ -94,7 +97,7 @@ class LanguageDetector {
           type: LanguageType.cpp,
           displayName: 'C++ (G++)',
           binaryName: 'g++',
-          runnerCommandTemplate: 'g++ {file} -o /tmp/cpp_out && /tmp/cpp_out',
+          runnerCommandTemplate: 'g++ {file} -o out && ./out',
           icon: Icons.data_object,
           color: Color(0xFFF34B7D),
         );
@@ -109,6 +112,7 @@ class LanguageDetector {
         );
       case 'html':
       case 'htm':
+      case 'css':
         return const LanguageInfo(
           type: LanguageType.html,
           displayName: 'HTML5 Webview',
@@ -123,7 +127,7 @@ class LanguageDetector {
           type: LanguageType.dart,
           displayName: 'Dart VM',
           binaryName: 'dart',
-          runnerCommandTemplate: 'dart run {file}',
+          runnerCommandTemplate: 'dart {file}',
           icon: Icons.flutter_dash,
           color: Color(0xFF00B4AB),
         );

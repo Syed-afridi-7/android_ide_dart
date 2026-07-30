@@ -1,44 +1,176 @@
+// ignore_for_file: prefer_initializing_formals
 import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:xterm/xterm.dart' hide TerminalState;
 import 'package:android_ide/features/terminal/domain/i_terminal_service.dart';
+import 'package:android_ide/features/terminal/infrastructure/ssh_terminal_adapter.dart';
 import 'package:android_ide/features/terminal/application/terminal_state.dart';
 
 export 'package:android_ide/features/terminal/application/terminal_state.dart';
 
+/// Manages triple terminal sessions: cloud (online), local (offline), and SSH (VPS).
 class TerminalCubit extends Cubit<TerminalDockState> {
-  final ITerminalService _service;
-  final Terminal terminal = Terminal(maxLines: 10000);
-  StreamSubscription<List<int>>? _outputSubscription;
-  bool _shellStarted = false;
+  final ITerminalService _cloudService;
+  final ITerminalService _localService;
+  final SshTerminalAdapter _sshService;
 
-  TerminalCubit(this._service) : super(const TerminalDockState());
+  /// Separate xterm buffers for each mode so switching preserves history.
+  final Terminal cloudTerminal = Terminal(maxLines: 10000);
+  final Terminal localTerminal = Terminal(maxLines: 10000);
+  final Terminal sshTerminal = Terminal(maxLines: 10000);
+
+  StreamSubscription<List<int>>? _outputSubscription;
+  bool _cloudStarted = false;
+  bool _localStarted = false;
+  bool _sshStarted = false;
+
+  TerminalCubit({
+    required ITerminalService cloudService,
+    required ITerminalService localService,
+    required SshTerminalAdapter sshService,
+  })  : _cloudService = cloudService,
+        _localService = localService,
+        _sshService = sshService,
+        super(const TerminalDockState());
+
+  /// The currently active terminal buffer for the UI to render.
+  Terminal get activeTerminal {
+    switch (state.activeMode) {
+      case TerminalMode.cloud:
+        return cloudTerminal;
+      case TerminalMode.local:
+        return localTerminal;
+      case TerminalMode.ssh:
+        return sshTerminal;
+    }
+  }
+
+  /// The currently active service.
+  ITerminalService get _activeService {
+    switch (state.activeMode) {
+      case TerminalMode.cloud:
+        return _cloudService;
+      case TerminalMode.local:
+        return _localService;
+      case TerminalMode.ssh:
+        return _sshService;
+    }
+  }
 
   @override
   Future<void> close() async {
     await _outputSubscription?.cancel();
-    await _service.dispose();
+    await _cloudService.dispose();
+    await _localService.dispose();
+    await _sshService.dispose();
     return super.close();
   }
 
-  /// Spawn the real PTY shell process and bind output stream.
-  Future<void> startPtySession({String shell = ''}) async {
-    if (_shellStarted && _service.isRunning) return;
+  /// Switch between cloud, local, and SSH terminal modes.
+  void switchMode(TerminalMode mode) {
+    if (state.activeMode == mode) return;
+
+    _outputSubscription?.cancel();
+    _outputSubscription = null;
+
+    emit(state.copyWith(activeMode: mode, sessionStatus: TerminalSessionStatus.idle));
+
+    // Auto-start cloud and local; SSH requires explicit connectSSH()
+    if (mode != TerminalMode.ssh) {
+      _ensureShellStarted();
+    }
+  }
+
+  /// Connect to a remote server via SSH.
+  Future<void> connectSSH(SshConnectionConfig config) async {
+    // Switch to SSH mode
+    _outputSubscription?.cancel();
+    _outputSubscription = null;
+
+    emit(state.copyWith(
+      activeMode: TerminalMode.ssh,
+      sessionStatus: TerminalSessionStatus.starting,
+      sshConfig: config,
+    ));
+
+    try {
+      // Start the WebSocket connection to the cloud proxy first
+      if (!_sshStarted || !_sshService.isRunning) {
+        await _sshService.startShell();
+        _sshStarted = true;
+      }
+
+      // Bind I/O
+      sshTerminal.onOutput = (data) {
+        _sshService.writeString(data);
+      };
+
+      _outputSubscription = _sshService.outputStream.listen(
+        (data) {
+          sshTerminal.write(String.fromCharCodes(data));
+        },
+        onDone: () {
+          if (!isClosed) {
+            emit(state.copyWith(sessionStatus: TerminalSessionStatus.exited));
+          }
+        },
+        onError: (e) {
+          if (!isClosed) {
+            emit(state.copyWith(sessionStatus: TerminalSessionStatus.error));
+          }
+        },
+      );
+
+      // Send SSH connect command to backend
+      _sshService.connectSSH(config);
+
+      sshTerminal.write(
+        '\x1b[36mConnecting to ${config.username}@${config.host}:${config.port}...\x1b[0m\r\n',
+      );
+
+      emit(state.copyWith(sessionStatus: TerminalSessionStatus.running));
+    } catch (e) {
+      sshTerminal.write('\x1b[31mSSH Connection Failed: $e\x1b[0m\r\n');
+      emit(state.copyWith(sessionStatus: TerminalSessionStatus.error));
+    }
+  }
+
+  /// Disconnect the active SSH session.
+  void disconnectSSH() {
+    _sshService.disconnectSSH();
+    _sshStarted = false;
+    emit(state.copyWith(sessionStatus: TerminalSessionStatus.exited));
+    sshTerminal.write('\r\n\x1b[33m[SSH Disconnected]\x1b[0m\r\n');
+  }
+
+  /// Spawn the shell for the currently active mode and bind I/O.
+  Future<void> startSession({String shell = ''}) async {
+    if (state.activeMode == TerminalMode.ssh) return; // SSH uses connectSSH()
+
+    final isCloud = state.activeMode == TerminalMode.cloud;
+    final service = _activeService;
+    final terminal = activeTerminal;
+    final alreadyStarted = isCloud ? _cloudStarted : _localStarted;
+
+    if (alreadyStarted && service.isRunning) return;
 
     emit(state.copyWith(sessionStatus: TerminalSessionStatus.starting));
 
     try {
-      await _service.startShell(shell: shell);
-      _shellStarted = true;
+      await service.startShell(shell: shell);
 
-      // Bind xterm onOutput -> PTY stdin (direct keyboard input from TerminalView)
+      if (isCloud) {
+        _cloudStarted = true;
+      } else {
+        _localStarted = true;
+      }
+
       terminal.onOutput = (data) {
-        _service.writeString(data);
+        service.writeString(data);
       };
 
-      // Bind PTY stdout -> xterm display
       _outputSubscription?.cancel();
-      _outputSubscription = _service.outputStream.listen(
+      _outputSubscription = service.outputStream.listen(
         (data) {
           terminal.write(String.fromCharCodes(data));
         },
@@ -89,39 +221,35 @@ class TerminalCubit extends Cubit<TerminalDockState> {
     }
   }
 
-  /// Clear the xterm display (UI only, does not affect shell state).
   void clearTerminal() {
-    terminal.write('\x1b[2J\x1b[H');
+    activeTerminal.write('\x1b[2J\x1b[H');
   }
 
-  /// Inject a log message directly into the terminal display.
   void appendLog(String text) {
-    terminal.write(text);
+    activeTerminal.write(text);
   }
 
-  /// Execute a command by piping it through the real PTY stdin.
-  /// The shell handles echoing, prompt, and stdout/stderr.
   void executeCommand(String command) {
     if (command.trim().isEmpty) return;
-    _ensureShellStarted();
+    if (state.activeMode != TerminalMode.ssh) _ensureShellStarted();
     emit(state.copyWith(currentCommand: command));
-    _service.writeString('$command\n');
+    _activeService.writeString('$command\n');
   }
 
-  /// Write raw string input to PTY stdin.
   void sendInput(String input) {
-    _service.writeString(input);
+    _activeService.writeString(input);
   }
 
-  /// Resize the PTY window dimensions.
   void resizeTerminal(int cols, int rows) {
-    _service.resize(cols, rows);
+    _activeService.resize(cols, rows);
   }
 
-  /// Auto-start shell on first interaction if not already running.
   void _ensureShellStarted() {
-    if (!_shellStarted || !_service.isRunning) {
-      startPtySession();
+    if (state.activeMode == TerminalMode.ssh) return;
+    final isCloud = state.activeMode == TerminalMode.cloud;
+    final alreadyStarted = isCloud ? _cloudStarted : _localStarted;
+    if (!alreadyStarted || !_activeService.isRunning) {
+      startSession();
     }
   }
 }

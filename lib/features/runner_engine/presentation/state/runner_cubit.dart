@@ -1,5 +1,8 @@
+// ignore_for_file: prefer_initializing_formals
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/utils/language_detector.dart';
+import '../../../../core/services/local_web_server_service.dart';
+import '../../../../core/services/cloud_workspace_sync_service.dart';
 
 enum RunnerStatus { idle, verifyingToolchain, running, webPreview, missingToolchain, failed }
 
@@ -40,7 +43,15 @@ class RunnerState {
 }
 
 class RunnerCubit extends Cubit<RunnerState> {
-  RunnerCubit() : super(RunnerState());
+  final LocalWebServerService _localWebServer;
+  final CloudWorkspaceSyncService _cloudSyncService;
+
+  RunnerCubit({
+    required LocalWebServerService localWebServer,
+    required CloudWorkspaceSyncService cloudSyncService,
+  })  : _localWebServer = localWebServer,
+        _cloudSyncService = cloudSyncService,
+        super(RunnerState());
 
   void prepareForFile(String? filePath) {
     if (filePath == null) {
@@ -55,15 +66,21 @@ class RunnerCubit extends Cubit<RunnerState> {
     ));
   }
 
-  Future<void> triggerRun({required String filePath, required String content}) async {
+  Future<void> triggerRun({
+    required String workspacePath,
+    required String filePath,
+    required String content,
+  }) async {
     final langInfo = LanguageDetector.detect(filePath);
 
     if (langInfo.isWebPreview) {
+      await _localWebServer.startServer(workspacePath);
+      final previewUrl = _localWebServer.getPreviewUrl(workspacePath, filePath);
       emit(RunnerState(
         status: RunnerStatus.webPreview,
         activeFilePath: filePath,
         languageInfo: langInfo,
-        webHtmlContent: content,
+        webHtmlContent: previewUrl, // We store the url here per prompt requirements
       ));
       return;
     }
@@ -85,6 +102,12 @@ class RunnerCubit extends Cubit<RunnerState> {
     }
 
     final command = langInfo.buildExecutionCommand(filePath);
+
+    if (langInfo.type == LanguageType.javascript ||
+        langInfo.type == LanguageType.python ||
+        langInfo.type == LanguageType.shell) {
+      await _cloudSyncService.syncSingleFile(workspacePath, filePath, content);
+    }
 
     emit(RunnerState(
       status: RunnerStatus.running,

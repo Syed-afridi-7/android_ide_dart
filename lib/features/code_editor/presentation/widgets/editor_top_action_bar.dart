@@ -183,7 +183,22 @@ class EditorTopActionBar extends StatelessWidget implements PreferredSizeWidget 
                         final runnerState = runnerCubit.state;
 
                         if (runnerState.status == RunnerStatus.webPreview) {
-                          if (context.mounted) {
+                          if (runnerState.webHtmlContent != null && runnerState.webHtmlContent!.isNotEmpty) {
+                            final uri = Uri.parse(runnerState.webHtmlContent!);
+                            try {
+                              await launchUrl(uri, mode: LaunchMode.externalApplication);
+                            } catch (_) {
+                              // Fallback to in-app modal preview if browser launch fails
+                              if (context.mounted) {
+                                LivePreviewModal.show(
+                                  context,
+                                  activeTab.filePath,
+                                  activeTab.content,
+                                  localUrl: runnerState.webHtmlContent,
+                                );
+                              }
+                            }
+                          } else if (context.mounted) {
                             LivePreviewModal.show(
                               context,
                               activeTab.filePath,
